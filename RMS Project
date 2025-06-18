@@ -1,0 +1,285 @@
+package application;
+
+import javafx.application.Application;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.geometry.Insets;
+import javafx.scene.Scene;
+import javafx.scene.control.*;
+import javafx.scene.layout.*;
+import javafx.stage.Stage;
+
+import java.util.*;
+
+public class RestaurantManagementSystem extends Application {
+
+    static class MenuItem {
+        String name;
+        double price;
+        boolean available;
+
+        MenuItem(String name, double price) {
+            this.name = name;
+            this.price = price;
+            this.available = true;
+        }
+
+        public String toString() {
+            return name + " - Rs " + price + (available ? " (Available)" : " (Not Available)");
+        }
+    }
+
+    static class Inventory {
+        Map<String, Integer> stock = new HashMap<>();
+
+        void addStock(String item, int quantity) {
+            stock.put(item, stock.getOrDefault(item, 0) + quantity);
+        }
+
+        boolean useStock(String item, int quantity) {
+            int current = stock.getOrDefault(item, 0);
+            if (current >= quantity) {
+                stock.put(item, current - quantity);
+                return true;
+            }
+            return false;
+        }
+
+        String displayStock() {
+            StringBuilder sb = new StringBuilder("\n--- Inventory ---\n");
+            for (Map.Entry<String, Integer> entry : stock.entrySet()) {
+                sb.append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+            }
+            return sb.toString();
+        }
+    }
+
+    static class Table {
+        int number;
+        boolean reserved;
+
+        Table(int number) {
+            this.number = number;
+            this.reserved = false;
+        }
+
+        @Override
+        public String toString() {
+            return "Table " + number + (reserved ? " (Reserved)" : " (Available)");
+        }
+    }
+
+    private ObservableList<MenuItem> menu = FXCollections.observableArrayList();
+    private Inventory inventory = new Inventory();
+    private List<Table> tables = new ArrayList<>();
+    private ComboBox<Table> tableSelector = new ComboBox<>();
+    private Table selectedTable = null;
+
+    private ListView<String> orderList = new ListView<>();
+    private Label totalLabel = new Label("Total: Rs 0");
+    private double total = 0;
+
+    private Deque<String> orderStack = new ArrayDeque<>();
+
+    @Override
+    public void start(Stage primaryStage) {
+        initData();
+
+        TabPane tabs = new TabPane();
+        Tab customerTab = new Tab("Customer", createCustomerUI());
+        Tab adminTab = new Tab("Admin", createAdminUI());
+
+        tabs.getTabs().addAll(customerTab, adminTab);
+        tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+
+        // Password protection for Admin tab
+        tabs.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            if (newTab == adminTab) {
+                boolean authenticated = showAdminLoginDialog();
+                if (!authenticated) {
+                    showAlert("Incorrect password. Access denied.");
+                    tabs.getSelectionModel().select(oldTab);
+                }
+            }
+        });
+
+        Scene scene = new Scene(tabs, 700, 600);
+        primaryStage.setScene(scene);
+        primaryStage.setTitle("Restaurant Management System");
+        primaryStage.show();
+    }
+
+    private void initData() {
+        String[] names = {"Chicken Wings", "Chilli Chicken", "Butter Naan", "Roti",
+                "Butter Chicken", "Kadai Chicken Curry", "Chicken Biryani",
+                "MLA Special Chicken Biryani", "Soft Drinks", "Ice cream"};
+        double[] prices = {200, 175, 25, 25, 250, 250, 200, 300, 25, 40};
+        int[] stocks = {10, 10, 15, 15, 5, 5, 15, 10, 20, 30};
+
+        for (int i = 0; i < names.length; i++) {
+            MenuItem item = new MenuItem(names[i], prices[i]);
+            menu.add(item);
+            inventory.addStock(names[i], stocks[i]);
+        }
+
+        for (int i = 1; i <= 5; i++) {
+            tables.add(new Table(i));
+        }
+    }
+
+    private VBox createCustomerUI() {
+        VBox layout = new VBox(10);
+        layout.setPadding(new Insets(15));
+
+        ComboBox<MenuItem> itemSelector = new ComboBox<>(menu);
+        itemSelector.setPromptText("Select menu item");
+
+        tableSelector.setPromptText("Select a table");
+        updateTableOptions();
+
+        Button reserveButton = new Button("Reserve Table");
+        reserveButton.setOnAction(e -> {
+            Table table = tableSelector.getValue();
+            if (table != null && !table.reserved) {
+                table.reserved = true;
+                selectedTable = table;
+                showAlert("Table " + table.number + " reserved successfully.");
+                updateTableOptions();
+            } else {
+                showAlert("Table is already reserved or not selected.");
+            }
+        });
+
+        Button addButton = new Button("Add to Order");
+        addButton.setOnAction(e -> {
+            MenuItem selected = itemSelector.getValue();
+            if (selected != null && selected.available && inventory.useStock(selected.name, 1)) {
+                String orderEntry = selected.name + " - Rs " + selected.price;
+                orderList.getItems().add(orderEntry);
+                orderStack.push(orderEntry);
+                total += selected.price;
+                totalLabel.setText("Total: Rs " + total);
+            } else {
+                showAlert("Item unavailable or out of stock.");
+            }
+        });
+
+        Button viewLastItem = new Button("View Last Added Item");
+        viewLastItem.setOnAction(e -> {
+            if (!orderStack.isEmpty()) {
+                showAlert("Last Item Added: " + orderStack.peek());
+            } else {
+                showAlert("No items in the stack.");
+            }
+        });
+
+        Button payButton = new Button("Pay Now");
+        payButton.setOnAction(e -> {
+            if (total > 0) {
+                showAlert("Payment successful! Amount Paid: Rs " + total);
+                orderList.getItems().clear();
+                orderStack.clear();
+                total = 0;
+                totalLabel.setText("Total: Rs 0");
+
+                if (selectedTable != null) {
+                    selectedTable.reserved = false;
+                    showAlert("Table " + selectedTable.number + " is now free.");
+                    updateTableOptions();
+                    selectedTable = null;
+                }
+            } else {
+                showAlert("No items in the order.");
+            }
+        });
+
+        layout.getChildren().addAll(
+                new Label("Select Table:"), tableSelector, reserveButton,
+                new Label("Menu:"), itemSelector, addButton,
+                viewLastItem,
+                new Label("Order Summary:"), orderList, totalLabel, payButton
+        );
+
+        return layout;
+    }
+
+    private VBox createAdminUI() {
+        VBox layout = new VBox(10);
+        layout.setPadding(new Insets(15));
+
+        TextArea inventoryView = new TextArea();
+        inventoryView.setEditable(false);
+        inventoryView.setPrefHeight(250);
+
+        Button refreshBtn = new Button("Refresh Inventory");
+        refreshBtn.setOnAction(e -> inventoryView.setText(inventory.displayStock()));
+
+        TextArea tableView = new TextArea();
+        tableView.setEditable(false);
+        tableView.setPrefHeight(150);
+
+        Button tableStatusBtn = new Button("View Table Status");
+        tableStatusBtn.setOnAction(e -> {
+            StringBuilder sb = new StringBuilder("Table Status:\n");
+            for (Table t : tables) {
+                sb.append(t).append("\n");
+            }
+            tableView.setText(sb.toString());
+        });
+
+        TextArea itemAvailabilityView = new TextArea();
+        itemAvailabilityView.setEditable(false);
+        itemAvailabilityView.setPrefHeight(200);
+
+        Button viewAvailabilityBtn = new Button("View Item Availability");
+        viewAvailabilityBtn.setOnAction(e -> {
+            StringBuilder sb = new StringBuilder("Item Availability:\n");
+            for (MenuItem item : menu) {
+                int qty = inventory.stock.getOrDefault(item.name, 0);
+                sb.append(item.name)
+                        .append(" - Rs ").append(item.price)
+                        .append(" | Available: ").append(qty > 0 ? "Yes (" + qty + ")" : "No")
+                        .append("\n");
+            }
+            itemAvailabilityView.setText(sb.toString());
+        });
+
+        layout.getChildren().addAll(
+                new Label("Inventory Status:"), inventoryView, refreshBtn,
+                new Label("Table Status:"), tableView, tableStatusBtn,
+                new Label("Item Availability:"), itemAvailabilityView, viewAvailabilityBtn
+        );
+        return layout;
+    }
+
+    private void updateTableOptions() {
+        tableSelector.getItems().clear();
+        for (Table t : tables) {
+            if (!t.reserved) {
+                tableSelector.getItems().add(t);
+            }
+        }
+    }
+
+    private boolean showAdminLoginDialog() {
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setTitle("Admin Login");
+        dialog.setHeaderText("Enter Admin Password");
+        dialog.setContentText("Password:");
+
+        Optional<String> result = dialog.showAndWait();
+        return result.isPresent() && result.get().equals("MLA");
+    }
+
+    private void showAlert(String msg) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("Info");
+        alert.setHeaderText(null);
+        alert.setContentText(msg);
+        alert.showAndWait();
+    }
+
+    public static void main(String[] args) {
+        launch(args);
+    }
+}
